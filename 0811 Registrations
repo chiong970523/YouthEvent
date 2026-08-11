@@ -1,0 +1,669 @@
+/**
+ * ============================================
+ * 青年相調系統
+ * Registration.gs
+ * ============================================
+ *
+ * Google Form 報名資料處理
+ *
+ * Version: 1.2.1
+ *
+ * 功能：
+ * 1. 建立 Form Submit Trigger
+ * 2. 自動產生報名編號
+ * 3. 將 Form 回覆整理到「報名資料」
+ * 4. 建立系統需要的欄位
+ * 5. 保留原始 Form 回覆資料
+ *
+ * ============================================
+ */
+
+
+/**
+ * ============================================
+ * 系統報名資料欄位
+ * ============================================
+ */
+const REGISTRATION_HEADERS = [
+  "報名編號",
+  "報名時間",
+  "姓名",
+  "性別",
+  "身分",
+  "所屬會所",
+  "手機",
+  "球類",
+  "是否已有隊友",
+  "籃球隊友1",
+  "籃球隊友2",
+  "是否已有羽球搭檔",
+  "羽球搭檔",
+  "是否已有桌球搭檔",
+  "桌球搭檔",
+  "飲食",
+  "備註",
+  "是否報到",
+  "報到時間"
+];
+
+
+/**
+ * ============================================
+ * 建立報名資料工作表
+ * ============================================
+ */
+function setupRegistrationSheet() {
+
+  const ss =
+    SpreadsheetApp.getActiveSpreadsheet();
+
+  let sheet =
+    ss.getSheetByName(
+      CONFIG.SHEET.REGISTRATION
+    );
+
+
+  if (!sheet) {
+
+    sheet = ss.insertSheet(
+      CONFIG.SHEET.REGISTRATION
+    );
+
+  }
+
+
+  // 如果尚未有標題，建立標題
+  if (sheet.getLastRow() === 0) {
+
+    sheet
+      .getRange(
+        1,
+        1,
+        1,
+        REGISTRATION_HEADERS.length
+      )
+      .setValues([
+        REGISTRATION_HEADERS
+      ]);
+
+  }
+
+
+  formatRegistrationSheet_(sheet);
+
+  return sheet;
+
+}
+
+
+/**
+ * ============================================
+ * 設定報名資料表格式
+ * ============================================
+ */
+function formatRegistrationSheet_(sheet) {
+
+  const lastColumn =
+    REGISTRATION_HEADERS.length;
+
+
+  sheet
+    .getRange(
+      1,
+      1,
+      1,
+      lastColumn
+    )
+    .setFontWeight("bold");
+
+
+  sheet.setFrozenRows(1);
+
+
+  sheet.autoResizeColumns(
+    1,
+    lastColumn
+  );
+
+}
+
+
+/**
+ * ============================================
+ * 建立 Form Submit Trigger
+ * ============================================
+ *
+ * 使用方式：
+ *
+ * 1. 先到 Apps Script 左側「觸發條件」
+ * 2. 如果已有 onRegistrationSubmit，
+ *    請先刪除舊的。
+ * 3. 執行本函式一次。
+ *
+ * 本函式不會在程式載入時自動執行。
+ * ============================================
+ */
+function setupRegistrationTrigger() {
+
+  const ui =
+    SpreadsheetApp.getUi();
+
+
+  try {
+
+    const ss =
+      SpreadsheetApp.getActiveSpreadsheet();
+
+
+    const triggers =
+      ScriptApp.getProjectTriggers();
+
+
+    let deletedCount = 0;
+
+
+    // ========================================
+    // 刪除舊的報名 Trigger
+    // ========================================
+
+    for (
+      let i = 0;
+      i < triggers.length;
+      i++
+    ) {
+
+      const trigger =
+        triggers[i];
+
+
+      if (
+        trigger.getHandlerFunction() ===
+        "onRegistrationSubmit"
+      ) {
+
+        ScriptApp.deleteTrigger(
+          trigger
+        );
+
+        deletedCount++;
+
+      }
+
+    }
+
+
+    // ========================================
+    // 建立新的 Trigger
+    // ========================================
+
+    ScriptApp
+      .newTrigger(
+        "onRegistrationSubmit"
+      )
+      .forSpreadsheet(ss)
+      .onFormSubmit()
+      .create();
+
+
+    // ========================================
+    // 顯示完成訊息
+    // ========================================
+
+    ui.alert(
+
+      "✅ 報名 Trigger 建立完成！\n\n" +
+
+      "清除舊 Trigger：" +
+      deletedCount +
+      " 個\n\n" +
+
+      "新的 Trigger：\n" +
+      "onRegistrationSubmit\n\n" +
+
+      "之後有人提交 Google Form，" +
+      "系統會自動處理報名資料。"
+
+    );
+
+
+  } catch (error) {
+
+    Logger.log(
+      "setupRegistrationTrigger 錯誤：\n" +
+      error.stack
+    );
+
+
+    ui.alert(
+
+      "❌ 建立 Trigger 失敗\n\n" +
+      error.message
+
+    );
+
+
+    throw error;
+
+  }
+
+}
+
+
+/**
+ * ============================================
+ * Form Submit 主要處理函式
+ * ============================================
+ *
+ * 注意：
+ * 本函式由 Trigger 自動執行。
+ *
+ * 不要直接按「執行」測試。
+ * ============================================
+ */
+function onRegistrationSubmit(e) {
+
+  if (
+    !e ||
+    !e.namedValues
+  ) {
+
+    throw new Error(
+      "onRegistrationSubmit：找不到 Form 回覆資料。"
+    );
+
+  }
+
+
+  const lock =
+    LockService.getScriptLock();
+
+
+  // 防止多人同時報名造成編號重複
+  lock.waitLock(30000);
+
+
+  try {
+
+    const sheet =
+      setupRegistrationSheet();
+
+
+    const data =
+      e.namedValues;
+
+
+    // ========================================
+    // 取得報名資料
+    // ========================================
+
+    const timestamp =
+      getFormValue_(
+        data,
+        "時間戳記"
+      );
+
+
+    const name =
+      getFormValue_(
+        data,
+        "姓名"
+      );
+
+
+    const gender =
+      getFormValue_(
+        data,
+        "性別"
+      );
+
+
+    const identity =
+      getFormValue_(
+        data,
+        "身分"
+      );
+
+
+    const church =
+      getFormValue_(
+        data,
+        "所屬會所"
+      );
+
+
+    const phone =
+      getFormValue_(
+        data,
+        "手機"
+      );
+
+
+    const sport =
+      getFormValue_(
+        data,
+        "請選擇欲參加的球類活動"
+      );
+
+
+    const basketballTeam =
+      getFormValue_(
+        data,
+        "是否已有隊友？"
+      );
+
+
+    const basketballPartner1 =
+      getFormValue_(
+        data,
+        "籃球隊友 1"
+      );
+
+
+    const basketballPartner2 =
+      getFormValue_(
+        data,
+        "籃球隊友 2"
+      );
+
+
+    const badmintonTeam =
+      getFormValue_(
+        data,
+        "是否已有羽球搭檔？"
+      );
+
+
+    const badmintonPartner =
+      getFormValue_(
+        data,
+        "羽球搭檔姓名"
+      );
+
+
+    const tableTennisTeam =
+      getFormValue_(
+        data,
+        "是否已有桌球搭檔？"
+      );
+
+
+    const tableTennisPartner =
+      getFormValue_(
+        data,
+        "桌球搭檔姓名"
+      );
+
+
+    const diet =
+      getFormValue_(
+        data,
+        "飲食"
+      );
+
+
+    const note =
+      getFormValue_(
+        data,
+        "備註"
+      );
+
+
+    // ========================================
+    // 產生報名編號
+    // ========================================
+
+    const registrationId =
+      generateRegistrationId_(
+        sheet
+      );
+
+
+    // ========================================
+    // 建立資料列
+    // ========================================
+
+    const row = [
+
+      registrationId,
+
+      timestamp || new Date(),
+
+      name,
+
+      gender,
+
+      identity,
+
+      church,
+
+      phone,
+
+      sport,
+
+      basketballTeam,
+
+      basketballPartner1,
+
+      basketballPartner2,
+
+      badmintonTeam,
+
+      badmintonPartner,
+
+      tableTennisTeam,
+
+      tableTennisPartner,
+
+      diet,
+
+      note,
+
+      "否",
+
+      ""
+
+    ];
+
+
+    // ========================================
+    // 寫入報名資料
+    // ========================================
+
+    sheet.appendRow(row);
+
+
+    formatRegistrationSheet_(
+      sheet
+    );
+
+
+    Logger.log(
+      "報名成功：" +
+      registrationId +
+      " / " +
+      name
+    );
+
+
+  } finally {
+
+    lock.releaseLock();
+
+  }
+
+}
+
+
+/**
+ * ============================================
+ * 產生報名編號
+ * ============================================
+ *
+ * 格式：
+ *
+ * YT0001
+ * YT0002
+ * YT0003
+ * ============================================
+ */
+function generateRegistrationId_(sheet) {
+
+  const prefix = "YT";
+
+
+  const lastRow =
+    sheet.getLastRow();
+
+
+  // 只有標題列
+  if (lastRow < 2) {
+
+    return prefix + "0001";
+
+  }
+
+
+  const idColumn =
+    sheet
+      .getRange(
+        2,
+        1,
+        lastRow - 1,
+        1
+      )
+      .getValues();
+
+
+  let maxNumber = 0;
+
+
+  for (
+    let i = 0;
+    i < idColumn.length;
+    i++
+  ) {
+
+    const value =
+      String(
+        idColumn[i][0] || ""
+      );
+
+
+    const match =
+      value.match(
+        /^YT(\d+)$/
+      );
+
+
+    if (match) {
+
+      const number =
+        parseInt(
+          match[1],
+          10
+        );
+
+
+      if (
+        number > maxNumber
+      ) {
+
+        maxNumber = number;
+
+      }
+
+    }
+
+  }
+
+
+  const nextNumber =
+    maxNumber + 1;
+
+
+  return (
+    prefix +
+    String(nextNumber)
+      .padStart(4, "0")
+  );
+
+}
+
+
+/**
+ * ============================================
+ * 從 Form namedValues 取得資料
+ * ============================================
+ */
+function getFormValue_(
+  data,
+  title
+) {
+
+  if (!data) {
+
+    return "";
+
+  }
+
+
+  if (!data[title]) {
+
+    return "";
+
+  }
+
+
+  if (
+    !Array.isArray(
+      data[title]
+    )
+  ) {
+
+    return String(
+      data[title]
+    ).trim();
+
+  }
+
+
+  return data[title]
+    .join(", ")
+    .trim();
+
+}
+
+
+/**
+ * ============================================
+ * 手動測試報名資料工作表
+ * ============================================
+ *
+ * 此函式不會新增假報名資料。
+ * ============================================
+ */
+function testRegistrationSystem() {
+
+  const sheet =
+    setupRegistrationSheet();
+
+
+  const count =
+    Math.max(
+      sheet.getLastRow() - 1,
+      0
+    );
+
+
+  SpreadsheetApp
+    .getUi()
+    .alert(
+
+      "✅ 報名資料系統正常。\n\n" +
+
+      "目前報名資料筆數：" +
+      count
+
+    );
+
+}
