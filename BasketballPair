@@ -1,0 +1,1128 @@
+/**
+ * ============================================
+ * 青年相調系統
+ * Basketball.gs
+ * ============================================
+ *
+ * 三人制籃球自動配隊
+ *
+ * 規則：
+ * 1. 只處理球類包含「籃球」的人
+ * 2. 有指定隊友者優先配隊
+ * 3. 指定隊友必須存在且同樣報名籃球
+ * 4. 指定隊友不能重複使用
+ * 5. 沒有指定隊友者自動三人一隊
+ * 6. 不足三人者進入「待配對」
+ * 7. 不修改「報名資料」
+ *
+ * ============================================
+ */
+
+
+/**
+ * ============================================
+ * 建立籃球隊伍
+ * ============================================
+ */
+function createBasketballTeams() {
+
+  const ss =
+    SpreadsheetApp.getActiveSpreadsheet();
+
+
+  // ==========================================
+  // 取得報名資料
+  // ==========================================
+
+  const registrationSheet =
+    ss.getSheetByName(
+      CONFIG.SHEET.REGISTRATION
+    );
+
+
+  if (!registrationSheet) {
+
+    SpreadsheetApp.getUi().alert(
+      "❌ 找不到「" +
+      CONFIG.SHEET.REGISTRATION +
+      "」工作表。"
+    );
+
+    return;
+
+  }
+
+
+  // ==========================================
+  // 讀取報名資料
+  // ==========================================
+
+  const lastRow =
+    registrationSheet.getLastRow();
+
+
+  if (lastRow < 2) {
+
+    SpreadsheetApp.getUi().alert(
+      "目前沒有報名資料。"
+    );
+
+    return;
+
+  }
+
+
+  const rows =
+    registrationSheet
+      .getRange(
+        2,
+        1,
+        lastRow - 1,
+        REGISTRATION_HEADERS.length
+      )
+      .getValues();
+
+
+  // ==========================================
+  // 建立參加籃球的人員資料
+  // ==========================================
+
+  const players = [];
+
+  rows.forEach(
+    function(row) {
+
+      const registrationId =
+        String(row[0] || "").trim();
+
+
+      const name =
+        String(row[2] || "").trim();
+
+
+      const sport =
+        String(row[7] || "").trim();
+
+
+      if (!registrationId || !name) {
+        return;
+      }
+
+
+      // 只處理籃球
+      if (!sport.includes("籃球")) {
+        return;
+      }
+
+
+      players.push({
+
+        id: registrationId,
+
+        name: name,
+
+        gender:
+          String(row[3] || "").trim(),
+
+        identity:
+          String(row[4] || "").trim(),
+
+        church:
+          String(row[5] || "").trim(),
+
+        phone:
+          String(row[6] || "").trim(),
+
+        hasPartner:
+          String(row[8] || "").trim(),
+
+        partner1:
+          String(row[9] || "").trim(),
+
+        partner2:
+          String(row[10] || "").trim()
+
+      });
+
+    }
+  );
+
+
+  // ==========================================
+  // 沒有人參加籃球
+  // ==========================================
+
+  if (players.length === 0) {
+
+    SpreadsheetApp.getUi().alert(
+      "目前沒有籃球報名者。"
+    );
+
+    return;
+
+  }
+
+
+  // ==========================================
+  // 建立查找表
+  // ==========================================
+
+  const playerById = {};
+
+  const playerByName = {};
+
+
+  players.forEach(
+    function(player) {
+
+      playerById[player.id] =
+        player;
+
+
+      const key =
+        normalizeName_(
+          player.name
+        );
+
+
+      if (!playerByName[key]) {
+
+        playerByName[key] = [];
+
+      }
+
+
+      playerByName[key].push(
+        player
+      );
+
+    }
+  );
+
+
+  // ==========================================
+  // 配對狀態
+  // ==========================================
+
+  const assigned = {};
+
+  const teams = [];
+
+  const pending = [];
+
+
+  let teamNumber = 1;
+
+
+  // ==========================================
+  // 第一階段：
+  // 處理有指定隊友的人
+  // ==========================================
+
+  players.forEach(
+    function(player) {
+
+      // 已經被使用
+      if (assigned[player.id]) {
+        return;
+      }
+
+
+      // 沒有指定隊友
+      if (
+        !isYesValue_(
+          player.hasPartner
+        )
+      ) {
+        return;
+      }
+
+
+      const requestedNames = [];
+
+
+      if (player.partner1) {
+
+        requestedNames.push(
+          player.partner1
+        );
+
+      }
+
+
+      if (player.partner2) {
+
+        requestedNames.push(
+          player.partner2
+        );
+
+      }
+
+
+      // ========================================
+      // 沒有實際填寫隊友
+      // ========================================
+
+      if (
+        requestedNames.length === 0
+      ) {
+
+        pending.push({
+
+          player: player,
+
+          reason:
+            "勾選已有隊友，但沒有填寫隊友姓名"
+
+        });
+
+        return;
+
+      }
+
+
+      // ========================================
+      // 找指定隊友
+      // ========================================
+
+      const foundPlayers = [];
+
+      let errorReason = "";
+
+
+      for (
+        let i = 0;
+        i < requestedNames.length;
+        i++
+      ) {
+
+        const requestedName =
+          requestedNames[i];
+
+
+        const matches =
+          playerByName[
+            normalizeName_(
+              requestedName
+            )
+          ] || [];
+
+
+        if (matches.length === 0) {
+
+          errorReason =
+            "找不到指定隊友：" +
+            requestedName;
+
+          break;
+
+        }
+
+
+        if (matches.length > 1) {
+
+          errorReason =
+            "指定隊友姓名重複：" +
+            requestedName;
+
+          break;
+
+        }
+
+
+        foundPlayers.push(
+          matches[0]
+        );
+
+      }
+
+
+      // ========================================
+      // 指定隊友不存在
+      // ========================================
+
+      if (errorReason) {
+
+        pending.push({
+
+          player: player,
+
+          reason: errorReason
+
+        });
+
+        return;
+
+      }
+
+
+      // ========================================
+      // 建立候選隊伍
+      // ========================================
+
+      const teamPlayers = [
+        player
+      ];
+
+
+      foundPlayers.forEach(
+        function(partner) {
+
+          if (
+            teamPlayers.findIndex(
+              function(member) {
+                return member.id === partner.id;
+              }
+            ) === -1
+          ) {
+
+            teamPlayers.push(
+              partner
+            );
+
+          }
+
+        }
+      );
+
+
+      // ========================================
+      // 必須剛好 3 人
+      // ========================================
+
+      if (
+        teamPlayers.length !== 3
+      ) {
+
+        pending.push({
+
+          player: player,
+
+          reason:
+            "指定隊友不足以組成三人隊伍"
+
+        });
+
+        return;
+
+      }
+
+
+      // ========================================
+      // 檢查是否有人已經被配隊
+      // ========================================
+
+      let alreadyAssigned = null;
+
+
+      for (
+        let i = 0;
+        i < teamPlayers.length;
+        i++
+      ) {
+
+        if (
+          assigned[
+            teamPlayers[i].id
+          ]
+        ) {
+
+          alreadyAssigned =
+            teamPlayers[i];
+
+          break;
+
+        }
+
+      }
+
+
+      if (alreadyAssigned) {
+
+        pending.push({
+
+          player: player,
+
+          reason:
+            "指定隊友「" +
+            alreadyAssigned.name +
+            "」已經被其他隊伍使用"
+
+        });
+
+        return;
+
+      }
+
+
+      // ========================================
+      // 正式建立隊伍
+      // ========================================
+
+      const team = {
+
+        number:
+          teamNumber++,
+
+        members:
+          teamPlayers,
+
+        type:
+          "指定隊友"
+
+      };
+
+
+      teams.push(team);
+
+
+      teamPlayers.forEach(
+        function(member) {
+
+          assigned[member.id] = true;
+
+        }
+      );
+
+    }
+  );
+
+
+  // ==========================================
+  // 第二階段：
+  // 沒有指定隊友者自動配隊
+  // ==========================================
+
+  const unassignedPlayers =
+    players.filter(
+      function(player) {
+
+        return !assigned[player.id];
+
+      }
+    );
+
+
+  // ==========================================
+  // 依序三人一隊
+  // ==========================================
+
+  let currentTeam = [];
+
+
+  unassignedPlayers.forEach(
+    function(player) {
+
+      // 有指定隊友但前面配對失敗的人
+      // 不直接丟進自動配對
+      if (
+        isYesValue_(
+          player.hasPartner
+        )
+      ) {
+
+        return;
+
+      }
+
+
+      currentTeam.push(
+        player
+      );
+
+
+      if (
+        currentTeam.length === 3
+      ) {
+
+        const team = {
+
+          number:
+            teamNumber++,
+
+          members:
+            currentTeam,
+
+          type:
+            "自動配對"
+
+        };
+
+
+        teams.push(team);
+
+
+        currentTeam.forEach(
+          function(member) {
+
+            assigned[member.id] = true;
+
+          }
+        );
+
+
+        currentTeam = [];
+
+      }
+
+    }
+  );
+
+
+  // ==========================================
+  // 剩餘不足三人的人
+  // ==========================================
+
+  currentTeam.forEach(
+    function(player) {
+
+      pending.push({
+
+        player: player,
+
+        reason:
+          "自動配對後不足三人"
+
+      });
+
+    }
+  );
+
+
+  // ==========================================
+  // 建立籃球工作表
+  // ==========================================
+
+  const basketballSheet =
+    getOrCreateBasketballSheet_(
+      ss
+    );
+
+
+  // 清除舊資料
+  clearBasketballSheet_(
+    basketballSheet
+  );
+
+
+  // ==========================================
+  // 寫入隊伍
+  // ==========================================
+
+  writeBasketballTeams_(
+    basketballSheet,
+    teams
+  );
+
+
+  // ==========================================
+  // 寫入待配對
+  // ==========================================
+
+  writeBasketballPending_(
+    basketballSheet,
+    pending
+  );
+
+
+  // ==========================================
+  // 完成訊息
+  // ==========================================
+
+  let message =
+    "✅ 籃球隊伍建立完成！\n\n" +
+
+    "籃球報名：" +
+    players.length +
+    " 人\n" +
+
+    "完整隊伍：" +
+    teams.length +
+    " 隊\n" +
+
+    "已配隊：" +
+    teams.length * 3 +
+    " 人\n" +
+
+    "待配對：" +
+    pending.length +
+    " 人";
+
+
+  if (pending.length > 0) {
+
+    message +=
+      "\n\n⚠️ 有人需要人工處理，" +
+      "請查看「籃球」工作表下方的待配對區。";
+
+  }
+
+
+  SpreadsheetApp
+    .getUi()
+    .alert(
+      message
+    );
+
+}
+
+
+/**
+ * ============================================
+ * 建立 / 取得籃球工作表
+ * ============================================
+ */
+function getOrCreateBasketballSheet_(
+  ss
+) {
+
+  let sheet =
+    ss.getSheetByName(
+      CONFIG.SHEET.BASKETBALL
+    );
+
+
+  if (!sheet) {
+
+    sheet =
+      ss.insertSheet(
+        CONFIG.SHEET.BASKETBALL
+      );
+
+  }
+
+
+  return sheet;
+
+}
+
+
+/**
+ * ============================================
+ * 清除舊籃球資料
+ * ============================================
+ */
+function clearBasketballSheet_(
+  sheet
+) {
+
+  // 先解除合併
+  sheet
+    .getRange(
+      1,
+      1,
+      sheet.getMaxRows(),
+      sheet.getMaxColumns()
+    )
+    .breakApart();
+
+
+  sheet.clear();
+
+}
+
+
+/**
+ * ============================================
+ * 寫入籃球隊伍
+ * ============================================
+ */
+function writeBasketballTeams_(
+  sheet,
+  teams
+) {
+
+  const headers = [
+
+    "隊伍",
+
+    "報名編號",
+
+    "姓名",
+
+    "性別",
+
+    "身分",
+
+    "所屬會所",
+
+    "配隊方式"
+
+  ];
+
+
+  sheet
+    .getRange(
+      1,
+      1,
+      1,
+      headers.length
+    )
+    .setValues([
+      headers
+    ]);
+
+
+  const output = [];
+
+
+  teams.forEach(
+    function(team) {
+
+      team.members.forEach(
+        function(player) {
+
+          output.push([
+
+            "籃球" +
+            String(
+              team.number
+            ).padStart(
+              2,
+              "0"
+            ),
+
+            player.id,
+
+            player.name,
+
+            player.gender,
+
+            player.identity,
+
+            player.church,
+
+            team.type
+
+          ]);
+
+        }
+      );
+
+    }
+  );
+
+
+  if (output.length > 0) {
+
+    sheet
+      .getRange(
+        2,
+        1,
+        output.length,
+        headers.length
+      )
+      .setValues(
+        output
+      );
+
+  }
+
+
+  formatBasketballHeader_(
+    sheet,
+    headers.length
+  );
+
+}
+
+
+/**
+ * ============================================
+ * 寫入待配對
+ * ============================================
+ */
+function writeBasketballPending_(
+  sheet,
+  pending
+) {
+
+  const startRow =
+    sheet.getLastRow() + 3;
+
+
+  const title = [
+    "⚠️ 待配對 / 待處理"
+  ];
+
+
+  sheet
+    .getRange(
+      startRow,
+      1,
+      1,
+      4
+    )
+    .merge();
+
+
+  sheet
+    .getRange(
+      startRow,
+      1
+    )
+    .setValue(
+      title[0]
+    )
+    .setFontWeight(
+      "bold"
+    );
+
+
+  const headers = [
+
+    "報名編號",
+
+    "姓名",
+
+    "所屬會所",
+
+    "原因"
+
+  ];
+
+
+  sheet
+    .getRange(
+      startRow + 1,
+      1,
+      1,
+      headers.length
+    )
+    .setValues([
+      headers
+    ]);
+
+
+  const output = [];
+
+
+  pending.forEach(
+    function(item) {
+
+      output.push([
+
+        item.player.id,
+
+        item.player.name,
+
+        item.player.church,
+
+        item.reason
+
+      ]);
+
+    }
+  );
+
+
+  if (output.length > 0) {
+
+    sheet
+      .getRange(
+        startRow + 2,
+        1,
+        output.length,
+        headers.length
+      )
+      .setValues(
+        output
+      );
+
+  }
+  else {
+
+    sheet
+      .getRange(
+        startRow + 2,
+        1,
+        1,
+        headers.length
+      )
+      .merge();
+
+
+    sheet
+      .getRange(
+        startRow + 2,
+        1
+      )
+      .setValue(
+        "目前沒有待配對人員。"
+      );
+
+  }
+
+
+  sheet
+    .getRange(
+      startRow + 1,
+      1,
+      1,
+      headers.length
+    )
+    .setFontWeight(
+      "bold"
+    );
+
+}
+
+
+/**
+ * ============================================
+ * 籃球標題格式
+ * ============================================
+ */
+function formatBasketballHeader_(
+  sheet,
+  columnCount
+) {
+
+  sheet.setFrozenRows(1);
+
+
+  sheet
+    .getRange(
+      1,
+      1,
+      1,
+      columnCount
+    )
+    .setFontWeight(
+      "bold"
+    );
+
+
+  sheet
+    .getRange(
+      1,
+      1,
+      Math.max(
+        sheet.getLastRow(),
+        1
+      ),
+      columnCount
+    )
+    .setVerticalAlignment(
+      "middle"
+    );
+
+
+  sheet.autoResizeColumns(
+    1,
+    columnCount
+  );
+
+}
+
+
+/**
+ * ============================================
+ * 判斷是否為「是」
+ * ============================================
+ */
+function isYesValue_(
+  value
+) {
+
+  const text =
+    String(
+      value || ""
+    )
+    .trim()
+    .toLowerCase();
+
+
+  return (
+
+    text === "是" ||
+
+    text === "有" ||
+
+    text === "yes" ||
+
+    text === "true"
+
+  );
+
+}
+
+
+/**
+ * ============================================
+ * 姓名標準化
+ * ============================================
+ */
+function normalizeName_(
+  name
+) {
+
+  return String(
+    name || ""
+  )
+  .replace(
+    /\s+/g,
+    ""
+  )
+  .trim()
+  .toLowerCase();
+
+}
+
+
+/**
+ * ============================================
+ * 測試函式
+ * ============================================
+ */
+function testBasketballSystem() {
+
+  const ss =
+    SpreadsheetApp.getActiveSpreadsheet();
+
+
+  const sheet =
+    ss.getSheetByName(
+      CONFIG.SHEET.REGISTRATION
+    );
+
+
+  if (!sheet) {
+
+    SpreadsheetApp.getUi().alert(
+      "❌ 找不到報名資料工作表。"
+    );
+
+    return;
+
+  }
+
+
+  const lastRow =
+    sheet.getLastRow();
+
+
+  const total =
+    Math.max(
+      lastRow - 1,
+      0
+    );
+
+
+  SpreadsheetApp
+    .getUi()
+    .alert(
+
+      "🏀 籃球系統測試\n\n" +
+
+      "目前報名資料：" +
+      total +
+      " 筆\n\n" +
+
+      "若要正式建立隊伍，" +
+      "請執行：\n" +
+      "createBasketballTeams()"
+
+    );
+
+}
