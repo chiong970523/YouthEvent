@@ -1,21 +1,727 @@
 /**
- * 建立 Dashboard
+ * ============================================
+ * 青年相調系統
+ * Dashboard.gs
+ * ============================================
+ *
+ * Version: 1.3.2
+ *
+ * 功能：
+ * 1. 顯示活動基本資料
+ * 2. 顯示總報名人數
+ * 3. 顯示三種球類報名人數
+ * 4. 顯示身分統計
+ * 5. 顯示性別統計
+ * 6. 顯示各會所報名人數
+ * 7. 顯示最後更新時間
+ *
+ * ============================================
  */
-function setupDashboardSheet(ss) {
 
-  const sheet = ss.getSheetByName(CONFIG.SHEET.DASHBOARD);
 
-  sheet.clear();
+/**
+ * ============================================
+ * 更新 Dashboard
+ * ============================================
+ */
+function updateDashboard() {
 
-  sheet.getRange("A1").setValue("青年相調 Dashboard");
+  const ss = SpreadsheetApp.getActiveSpreadsheet();
 
-  sheet.getRange("A3").setValue("活動名稱");
-  sheet.getRange("B3").setValue(CONFIG.EVENT.NAME);
+  // ==========================================
+  // 取得「報名資料」
+  // ==========================================
 
-  sheet.getRange("A4").setValue("活動日期");
-  sheet.getRange("B4").setValue(CONFIG.EVENT.DATE);
+  const registrationSheet =
+    ss.getSheetByName(
+      CONFIG.SHEET.REGISTRATION
+    );
 
-  sheet.getRange("A5").setValue("活動地點");
-  sheet.getRange("B5").setValue(CONFIG.EVENT.LOCATION);
+  if (!registrationSheet) {
+
+    SpreadsheetApp.getUi().alert(
+      "❌ 找不到「" +
+      CONFIG.SHEET.REGISTRATION +
+      "」工作表。"
+    );
+
+    return;
+  }
+
+
+  // ==========================================
+  // 讀取報名資料
+  // ==========================================
+
+  const lastRow =
+    registrationSheet.getLastRow();
+
+  let registrations = [];
+
+  if (lastRow >= 2) {
+
+    registrations =
+      registrationSheet
+        .getRange(
+          2,
+          1,
+          lastRow - 1,
+          REGISTRATION_HEADERS.length
+        )
+        .getValues();
+
+  }
+
+
+  // ==========================================
+  // 取得 / 建立 Dashboard
+  // ==========================================
+
+  let dashboard =
+    ss.getSheetByName(
+      CONFIG.SHEET.DASHBOARD
+    );
+
+  if (!dashboard) {
+
+    dashboard =
+      ss.insertSheet(
+        CONFIG.SHEET.DASHBOARD
+      );
+
+  }
+
+
+  // ==========================================
+  // 清除舊 Dashboard
+  // ==========================================
+
+  // 先解除所有合併儲存格
+  dashboard
+    .getRange(
+      1,
+      1,
+      dashboard.getMaxRows(),
+      dashboard.getMaxColumns()
+    )
+    .breakApart();
+
+  // 再清除內容與格式
+  dashboard.clear();
+
+
+  // ==========================================
+  // 計算統計
+  // ==========================================
+
+  const statistics =
+    calculateDashboardStatistics_(
+      registrations
+    );
+
+
+  // ==========================================
+  // 活動標題
+  // ==========================================
+
+  dashboard
+    .getRange("A1:H1")
+    .merge();
+
+  dashboard
+    .getRange("A1")
+    .setValue(
+      CONFIG.EVENT.NAME
+    )
+    .setFontSize(20)
+    .setFontWeight("bold")
+    .setHorizontalAlignment("center");
+
+
+  dashboard
+    .getRange("A2:H2")
+    .merge();
+
+  dashboard
+    .getRange("A2")
+    .setValue(
+      CONFIG.EVENT.DATE +
+      "｜" +
+      CONFIG.EVENT.LOCATION
+    )
+    .setHorizontalAlignment("center");
+
+
+  // ==========================================
+  // 總報名人數
+  // ==========================================
+
+  dashboard
+    .getRange("A4:C4")
+    .merge();
+
+  dashboard
+    .getRange("A4")
+    .setValue("目前總報名")
+    .setFontWeight("bold")
+    .setHorizontalAlignment("center");
+
+
+  dashboard
+    .getRange("A5:C6")
+    .merge();
+
+  dashboard
+    .getRange("A5")
+    .setValue(
+      statistics.total +
+      " / " +
+      CONFIG.LIMIT.TOTAL
+    )
+    .setFontSize(24)
+    .setFontWeight("bold")
+    .setHorizontalAlignment("center")
+    .setVerticalAlignment("middle");
+
+
+  // ==========================================
+  // 球類統計
+  // ==========================================
+
+  dashboard
+    .getRange("E4:H4")
+    .merge();
+
+  dashboard
+    .getRange("E4")
+    .setValue("球類報名")
+    .setFontWeight("bold")
+    .setHorizontalAlignment("center");
+
+
+  dashboard
+    .getRange("E5:H8")
+    .setValues([
+
+      [
+        "🏀 三人制籃球",
+        statistics.basketball,
+        "/",
+        CONFIG.LIMIT.BASKETBALL
+      ],
+
+      [
+        "🏸 雙人羽球",
+        statistics.badminton,
+        "/",
+        CONFIG.LIMIT.BADMINTON
+      ],
+
+      [
+        "🏓 雙人桌球",
+        statistics.tableTennis,
+        "/",
+        CONFIG.LIMIT.TABLE_TENNIS
+      ],
+
+      [
+        "合計",
+        statistics.sportsTotal,
+        "/",
+        CONFIG.LIMIT.BASKETBALL +
+        CONFIG.LIMIT.BADMINTON +
+        CONFIG.LIMIT.TABLE_TENNIS
+      ]
+
+    ]);
+
+
+  // ==========================================
+  // 身分統計
+  // ==========================================
+
+  dashboard
+    .getRange("A9:B9")
+    .merge();
+
+  dashboard
+    .getRange("A9")
+    .setValue("身分統計")
+    .setFontWeight("bold")
+    .setHorizontalAlignment("center");
+
+
+  dashboard
+    .getRange("A10:B13")
+    .setValues([
+
+      [
+        "青少年",
+        statistics.youth
+      ],
+
+      [
+        "大專",
+        statistics.college
+      ],
+
+      [
+        "青職",
+        statistics.worker
+      ],
+
+      [
+        "合計",
+        statistics.total
+      ]
+
+    ]);
+
+
+  // ==========================================
+  // 性別統計
+  // ==========================================
+
+  dashboard
+    .getRange("D9:E9")
+    .merge();
+
+  dashboard
+    .getRange("D9")
+    .setValue("性別統計")
+    .setFontWeight("bold")
+    .setHorizontalAlignment("center");
+
+
+  dashboard
+    .getRange("D10:E12")
+    .setValues([
+
+      [
+        "男",
+        statistics.male
+      ],
+
+      [
+        "女",
+        statistics.female
+      ],
+
+      [
+        "合計",
+        statistics.male +
+        statistics.female
+      ]
+
+    ]);
+
+
+  // ==========================================
+  // 各會所統計
+  // ==========================================
+
+  dashboard
+    .getRange("A15:H15")
+    .merge();
+
+  dashboard
+    .getRange("A15")
+    .setValue("各會所報名人數")
+    .setFontWeight("bold")
+    .setHorizontalAlignment("center");
+
+
+  const churchRows = [];
+
+  CONFIG.CHURCHES.forEach(
+    function(church) {
+
+      churchRows.push([
+
+        church,
+
+        statistics.churches[church] || 0
+
+      ]);
+
+    }
+  );
+
+
+  if (churchRows.length > 0) {
+
+    dashboard
+      .getRange(
+        16,
+        1,
+        churchRows.length,
+        2
+      )
+      .setValues(
+        churchRows
+      );
+
+  }
+
+
+  // ==========================================
+  // 最後更新時間
+  // ==========================================
+
+  const updateRow =
+    16 +
+    CONFIG.CHURCHES.length +
+    2;
+
+
+  dashboard
+    .getRange(
+      updateRow,
+      1,
+      1,
+      8
+    )
+    .merge();
+
+
+  dashboard
+    .getRange(
+      updateRow,
+      1
+    )
+    .setValue(
+      "最後更新：" +
+      Utilities.formatDate(
+        new Date(),
+        Session.getScriptTimeZone(),
+        "yyyy/MM/dd HH:mm:ss"
+      )
+    )
+    .setHorizontalAlignment("right");
+
+
+  // ==========================================
+  // 套用格式
+  // ==========================================
+
+  formatDashboard_(
+    dashboard
+  );
+
+
+  SpreadsheetApp
+    .getUi()
+    .alert(
+      "✅ Dashboard 更新完成！\n\n" +
+      "目前總報名：" +
+      statistics.total +
+      " / " +
+      CONFIG.LIMIT.TOTAL
+    );
+
+}
+
+
+/**
+ * ============================================
+ * 計算 Dashboard 統計
+ * ============================================
+ */
+function calculateDashboardStatistics_(
+  registrations
+) {
+
+  const statistics = {
+
+    total: 0,
+
+    basketball: 0,
+
+    badminton: 0,
+
+    tableTennis: 0,
+
+    sportsTotal: 0,
+
+    youth: 0,
+
+    college: 0,
+
+    worker: 0,
+
+    male: 0,
+
+    female: 0,
+
+    churches: {}
+
+  };
+
+
+  // ==========================================
+  // 初始化所有會所
+  // ==========================================
+
+  CONFIG.CHURCHES.forEach(
+    function(church) {
+
+      statistics.churches[church] = 0;
+
+    }
+  );
+
+
+  // ==========================================
+  // 逐筆統計
+  // ==========================================
+
+  registrations.forEach(
+    function(row) {
+
+      // A欄：報名編號
+      const registrationId =
+        String(
+          row[0] || ""
+        ).trim();
+
+
+      // 沒有報名編號就不計算
+      if (!registrationId) {
+        return;
+      }
+
+
+      statistics.total++;
+
+
+      // ========================================
+      // 球類
+      // H欄：球類
+      // ========================================
+
+      const sport =
+        String(
+          row[7] || ""
+        ).trim();
+
+
+      if (
+        sport.includes("籃球")
+      ) {
+
+        statistics.basketball++;
+
+      }
+
+      else if (
+        sport.includes("羽球")
+      ) {
+
+        statistics.badminton++;
+
+      }
+
+      else if (
+        sport.includes("桌球")
+      ) {
+
+        statistics.tableTennis++;
+
+      }
+
+
+      // ========================================
+      // 身分
+      // E欄：身分
+      // ========================================
+
+      const identity =
+        String(
+          row[4] || ""
+        ).trim();
+
+
+      if (
+        identity === "青少年"
+      ) {
+
+        statistics.youth++;
+
+      }
+
+      else if (
+        identity === "大專"
+      ) {
+
+        statistics.college++;
+
+      }
+
+      else if (
+        identity === "青職"
+      ) {
+
+        statistics.worker++;
+
+      }
+
+
+      // ========================================
+      // 性別
+      // D欄：性別
+      // ========================================
+
+      const gender =
+        String(
+          row[3] || ""
+        ).trim();
+
+
+      if (
+        gender === "男"
+      ) {
+
+        statistics.male++;
+
+      }
+
+      else if (
+        gender === "女"
+      ) {
+
+        statistics.female++;
+
+      }
+
+
+      // ========================================
+      // 會所
+      // F欄：所屬會所
+      // ========================================
+
+      const church =
+        String(
+          row[5] || ""
+        ).trim();
+
+
+      if (
+        Object.prototype.hasOwnProperty.call(
+          statistics.churches,
+          church
+        )
+      ) {
+
+        statistics.churches[church]++;
+
+      }
+
+    }
+  );
+
+
+  statistics.sportsTotal =
+    statistics.basketball +
+    statistics.badminton +
+    statistics.tableTennis;
+
+
+  return statistics;
+
+}
+
+
+/**
+ * ============================================
+ * Dashboard 格式
+ * ============================================
+ */
+function formatDashboard_(
+  dashboard
+) {
+
+  dashboard.setFrozenRows(2);
+
+
+  dashboard
+    .getDataRange()
+    .setVerticalAlignment(
+      "middle"
+    );
+
+
+  dashboard
+    .getRange("A1:H2")
+    .setHorizontalAlignment(
+      "center"
+    );
+
+
+  dashboard
+    .getRangeList([
+      "A4:C4",
+      "E4:H4",
+      "A9:B9",
+      "D9:E9",
+      "A15:H15"
+    ])
+    .setFontWeight(
+      "bold"
+    );
+
+
+  // 欄寬
+  dashboard.setColumnWidth(1, 180);
+  dashboard.setColumnWidth(2, 90);
+  dashboard.setColumnWidth(3, 60);
+  dashboard.setColumnWidth(4, 140);
+  dashboard.setColumnWidth(5, 110);
+  dashboard.setColumnWidth(6, 80);
+  dashboard.setColumnWidth(7, 60);
+  dashboard.setColumnWidth(8, 80);
+
+
+  // 會所人數置中
+  dashboard
+    .getRange(
+      16,
+      2,
+      CONFIG.CHURCHES.length,
+      1
+    )
+    .setHorizontalAlignment(
+      "center"
+    );
+
+
+  // 加上框線
+  dashboard
+    .getRange(
+      4,
+      1,
+      12 +
+      CONFIG.CHURCHES.length,
+      8
+    )
+    .setBorder(
+      true,
+      true,
+      true,
+      true,
+      true,
+      true
+    );
+
+}
+
+
+/**
+ * ============================================
+ * 測試 Dashboard
+ * ============================================
+ */
+function testDashboard() {
+
+  updateDashboard();
 
 }
