@@ -1,23 +1,613 @@
+/**
+ * ============================================
+ * 青年相調系統
+ * FormManager.gs
+ * ============================================
+ *
+ * Google Form 建立與管理模組
+ *
+ * Version: 1.1.0
+ * ============================================
+ */
+
+
+/**
+ * 建立青年相調 Google Form
+ *
+ * 功能：
+ * 1. 建立新的 Google Form
+ * 2. 建立基本資料
+ * 3. 建立 33 個會所選項
+ * 4. 建立三種球類選擇
+ * 5. 建立籃球、羽球、桌球分流
+ * 6. 建立飲食與備註
+ * 7. 連結目前 Google Spreadsheet
+ * 8. 將 Form 資訊寫入「設定」
+ */
 function createGoogleForm() {
-  // 建立表單
+
+  const ui = SpreadsheetApp.getUi();
+  const ss = SpreadsheetApp.getActiveSpreadsheet();
+
+  try {
+
+    // ==========================================
+    // 1. 確認是否已有舊表單
+    // ==========================================
+
+    const settingSheet = getOrCreateSettingSheet_();
+
+    const oldFormId = getSettingValue_("FORM_ID");
+
+    if (oldFormId) {
+
+      const result = ui.alert(
+        "已有 Google Form",
+        "系統發現之前已建立過 Google Form。\n\n" +
+        "是否要停用舊表單並建立新的表單？",
+        ui.ButtonSet.YES_NO
+      );
+
+      if (result !== ui.Button.YES) {
+        return;
+      }
+
+      deactivateOldForm_(oldFormId);
+    }
+
+
+    // ==========================================
+    // 2. 建立 Google Form
+    // ==========================================
+
+    const formTitle =
+      CONFIG.EVENT.NAME + "報名表";
+
+    const form = FormApp.create(formTitle);
+
+
+    // ==========================================
+    // 3. 基本設定
+    // ==========================================
+
+    form.setDescription(
+      CONFIG.EVENT.NAME + "\n\n" +
+      "活動日期：" + CONFIG.EVENT.DATE + "\n" +
+      "活動地點：" + CONFIG.EVENT.LOCATION + "\n\n" +
+      "報名對象：青少年、大專、青職\n\n" +
+      "請依照實際情況填寫報名資料，並選擇欲參加的球類活動。"
+    );
+
+    // 不蒐集 Email
+    form.setCollectEmail(false);
+
+    // 不限制只能登入 Google
+    // 不設定「限制每人只能回答一次」
+    // 因此不會主動要求 Google 登入。
+
+
+    // ==========================================
+    // 4. 建立基本資料
+    // ==========================================
+
+    addBasicQuestions_(form);
+
+
+    // ==========================================
+    // 5. 建立球類分流
+    // ==========================================
+
+    addSportSections_(form);
+
+
+    // ==========================================
+    // 6. 建立共同結尾
+    // ==========================================
+
+    addFinalSection_(form);
+
+
+    // ==========================================
+    // 7. 設定完成訊息
+    // ==========================================
+
+    form.setConfirmationMessage(
+      "報名成功！\n\n" +
+      "感謝你報名「" + CONFIG.EVENT.NAME + "」。\n" +
+      "活動日期：" + CONFIG.EVENT.DATE + "\n" +
+      "活動地點：" + CONFIG.EVENT.LOCATION + "\n\n" +
+      "請留意後續活動通知。"
+    );
+
+
+    // ==========================================
+    // 8. 連結目前 Spreadsheet
+    // ==========================================
+
+    form.setDestination(
+      FormApp.DestinationType.SPREADSHEET,
+      ss.getId()
+    );
+
+
+    // ==========================================
+    // 9. 儲存 Form 資訊
+    // ==========================================
+
+    saveFormInfo_(form);
+
+
+    // ==========================================
+    // 10. 顯示結果
+    // ==========================================
+
+    const formUrl = form.getPublishedUrl();
+    const editUrl = form.getEditUrl();
+
+    ui.alert(
+      "✅ Google Form 建立完成！\n\n" +
+      "填寫網址：\n" +
+      formUrl + "\n\n" +
+      "編輯網址：\n" +
+      editUrl
+    );
+
+
+  } catch (error) {
+
+    Logger.log(error);
+
+    ui.alert(
+      "❌ 建立 Google Form 時發生錯誤\n\n" +
+      error.message
+    );
+
+    throw error;
+  }
+
 }
 
-function addBasicQuestions(form) {
-  // 基本資料
-}
 
-function addSportQuestions(form) {
-  // 球類選擇
-}
+/**
+ * ============================================
+ * 建立基本資料題目
+ * ============================================
+ */
+function addBasicQuestions_(form) {
 
-function addPartnerSections(form) {
-  // 籃球/羽球/桌球分流
-}
+  // 姓名
+  form.addTextItem()
+    .setTitle("姓名")
+    .setRequired(true);
 
-function saveFormInfo(form) {
-  // 儲存 Form ID、網址
-}
 
-form.addListItem()
+  // 性別
+  form.addMultipleChoiceItem()
+    .setTitle("性別")
+    .setChoiceValues([
+      "男",
+      "女"
+    ])
+    .setRequired(true);
+
+
+  // 身分
+  form.addMultipleChoiceItem()
+    .setTitle("身分")
+    .setChoiceValues([
+      "青少年",
+      "大專",
+      "青職"
+    ])
+    .setRequired(true);
+
+
+  // 所屬會所
+  form.addListItem()
     .setTitle("所屬會所")
-    .setChoiceValues(CONFIG.CHURCHES);
+    .setChoiceValues(CONFIG.CHURCHES)
+    .setRequired(true);
+
+
+  // 手機
+  form.addTextItem()
+    .setTitle("手機")
+    .setHelpText("請填寫可以聯絡到你的手機號碼。")
+    .setRequired(true);
+
+}
+
+
+/**
+ * ============================================
+ * 建立球類分流
+ * ============================================
+ *
+ * 流程：
+ *
+ * 球類選擇
+ *    │
+ *    ├── 三人制籃球
+ *    │      ├── 是否已有隊友？ 有／沒有
+ *    │      ├── 籃球隊友 1
+ *    │      └── 籃球隊友 2
+ *    │
+ *    ├── 雙人羽球
+ *    │      ├── 是否已有羽球搭檔？ 有／沒有
+ *    │      └── 羽球搭檔姓名
+ *    │
+ *    └── 雙人桌球
+ *           ├── 是否已有桌球搭檔？ 有／沒有
+ *           └── 桌球搭檔姓名
+ *
+ * 三種球類最後都進入「其他資料」。
+ */
+function addSportSections_(form) {
+
+  // ==========================================
+  // 1. 球類選擇
+  // ==========================================
+
+  const sportItem = form.addMultipleChoiceItem();
+
+  sportItem
+    .setTitle("請選擇欲參加的球類活動")
+    .setHelpText(
+      "請選擇一項球類活動：\n" +
+      "三人制籃球、雙人羽球、雙人桌球。"
+    )
+    .setRequired(true);
+
+
+  // ==========================================
+  // 2. 建立籃球頁面
+  // ==========================================
+
+  const basketballPage = form
+    .addPageBreakItem()
+    .setTitle("🏀 三人制籃球");
+
+
+  // 籃球：是否已有隊友
+  const basketballTeamItem =
+    form.addMultipleChoiceItem();
+
+  basketballTeamItem
+    .setTitle("是否已有隊友？")
+    .setChoiceValues([
+      "有",
+      "沒有"
+    ])
+    .setRequired(true);
+
+
+  // 籃球隊友 1
+  form.addTextItem()
+    .setTitle("籃球隊友 1")
+    .setHelpText(
+      "如果已有隊友，請填寫第一位隊友姓名；沒有可留白。"
+    )
+    .setRequired(false);
+
+
+  // 籃球隊友 2
+  form.addTextItem()
+    .setTitle("籃球隊友 2")
+    .setHelpText(
+      "如果已有隊友，請填寫第二位隊友姓名；沒有可留白。"
+    )
+    .setRequired(false);
+
+
+  // ==========================================
+  // 3. 建立羽球頁面
+  // ==========================================
+
+  const badmintonPage = form
+    .addPageBreakItem()
+    .setTitle("🏸 雙人羽球");
+
+
+  // 羽球：是否已有搭檔
+  const badmintonPartnerItem =
+    form.addMultipleChoiceItem();
+
+  badmintonPartnerItem
+    .setTitle("是否已有羽球搭檔？")
+    .setChoiceValues([
+      "有",
+      "沒有"
+    ])
+    .setRequired(true);
+
+
+  // 羽球搭檔
+  form.addTextItem()
+    .setTitle("羽球搭檔姓名")
+    .setHelpText(
+      "如果已有搭檔，請填寫搭檔姓名；沒有可留白。"
+    )
+    .setRequired(false);
+
+
+  // ==========================================
+  // 4. 建立桌球頁面
+  // ==========================================
+
+  const tableTennisPage = form
+    .addPageBreakItem()
+    .setTitle("🏓 雙人桌球");
+
+
+  // 桌球：是否已有搭檔
+  const tableTennisPartnerItem =
+    form.addMultipleChoiceItem();
+
+  tableTennisPartnerItem
+    .setTitle("是否已有桌球搭檔？")
+    .setChoiceValues([
+      "有",
+      "沒有"
+    ])
+    .setRequired(true);
+
+
+  // 桌球搭檔
+  form.addTextItem()
+    .setTitle("桌球搭檔姓名")
+    .setHelpText(
+      "如果已有搭檔，請填寫搭檔姓名；沒有可留白。"
+    )
+    .setRequired(false);
+
+
+  // ==========================================
+  // 5. 建立共同結尾頁面
+  // ==========================================
+
+  const finalPage = form
+    .addPageBreakItem()
+    .setTitle("其他資料");
+
+
+  // ==========================================
+  // 6. 設定球類選擇的分流
+  // ==========================================
+
+  sportItem.setChoices([
+
+    sportItem.createChoice(
+      "三人制籃球",
+      basketballPage
+    ),
+
+    sportItem.createChoice(
+      "雙人羽球",
+      badmintonPage
+    ),
+
+    sportItem.createChoice(
+      "雙人桌球",
+      tableTennisPage
+    )
+
+  ]);
+
+
+  // ==========================================
+  // 7. 三個球類完成後都進入共同結尾
+  // ==========================================
+
+  basketballPage.setGoToPage(finalPage);
+
+  badmintonPage.setGoToPage(finalPage);
+
+  tableTennisPage.setGoToPage(finalPage);
+
+}
+
+
+/**
+ * ============================================
+ * 建立共同結尾
+ * ============================================
+ */
+function addFinalSection_(form) {
+
+  // 飲食
+  form.addMultipleChoiceItem()
+    .setTitle("飲食")
+    .setChoiceValues([
+      "葷食",
+      "蛋奶素",
+      "全素"
+    ])
+    .setRequired(true);
+
+
+  // 備註
+  form.addParagraphTextItem()
+    .setTitle("備註")
+    .setHelpText(
+      "如有其他需要讓主辦單位知道的事項，請填寫於此。"
+    )
+    .setRequired(false);
+
+}
+
+
+/**
+ * ============================================
+ * 儲存 Form 資訊
+ * ============================================
+ */
+function saveFormInfo_(form) {
+
+  const sheet = getOrCreateSettingSheet_();
+
+  // 清除原有內容
+  sheet.clear();
+
+
+  // 標題
+  sheet.getRange("A1:B1")
+    .setValues([
+      ["青年相調系統設定", ""]
+    ]);
+
+  sheet.getRange("A1:B1")
+    .merge();
+
+
+  // 基本活動資訊
+  const data = [
+
+    ["活動名稱", CONFIG.EVENT.NAME],
+
+    ["活動日期", CONFIG.EVENT.DATE],
+
+    ["活動地點", CONFIG.EVENT.LOCATION],
+
+    ["總名額", CONFIG.LIMIT.TOTAL],
+
+    ["籃球名額", CONFIG.LIMIT.BASKETBALL],
+
+    ["羽球名額", CONFIG.LIMIT.BADMINTON],
+
+    ["桌球名額", CONFIG.LIMIT.TABLE_TENNIS],
+
+    ["FORM_ID", form.getId()],
+
+    ["FORM_URL", form.getPublishedUrl()],
+
+    ["FORM_EDIT_URL", form.getEditUrl()],
+
+    ["FORM_TITLE", form.getTitle()],
+
+    ["FORM_CREATED_AT", new Date()]
+
+  ];
+
+
+  sheet.getRange(
+    3,
+    1,
+    data.length,
+    2
+  ).setValues(data);
+
+
+  // 格式
+  sheet.getRange("A1:B1")
+    .setFontWeight("bold");
+
+  sheet.getRange("A3:A" + (data.length + 2))
+    .setFontWeight("bold");
+
+  sheet.autoResizeColumns(1, 2);
+
+}
+
+
+/**
+ * ============================================
+ * 取得設定工作表
+ * ============================================
+ */
+function getOrCreateSettingSheet_() {
+
+  const ss = SpreadsheetApp.getActiveSpreadsheet();
+
+  let sheet = ss.getSheetByName(
+    CONFIG.SHEET.SETTING
+  );
+
+
+  if (!sheet) {
+
+    sheet = ss.insertSheet(
+      CONFIG.SHEET.SETTING
+    );
+
+  }
+
+
+  return sheet;
+
+}
+
+
+/**
+ * ============================================
+ * 取得設定值
+ * ============================================
+ */
+function getSettingValue_(key) {
+
+  const sheet = getOrCreateSettingSheet_();
+
+  const lastRow = sheet.getLastRow();
+
+  if (lastRow < 3) {
+    return "";
+  }
+
+
+  const values = sheet
+    .getRange(
+      3,
+      1,
+      lastRow - 2,
+      2
+    )
+    .getValues();
+
+
+  for (let i = 0; i < values.length; i++) {
+
+    if (values[i][0] === key) {
+
+      return values[i][1];
+
+    }
+
+  }
+
+
+  return "";
+
+}
+
+
+/**
+ * ============================================
+ * 停用舊 Google Form
+ *
+ * 注意：
+ * 不直接刪除檔案。
+ * 只停止接受回覆，避免誤刪資料。
+ * ============================================
+ */
+function deactivateOldForm_(formId) {
+
+  try {
+
+    const oldForm = FormApp.openById(formId);
+
+    oldForm.setAcceptingResponses(false);
+
+    oldForm.setCustomClosedFormMessage(
+      "此報名表已停止接受報名。"
+    );
+
+
+  } catch (error) {
+
+    Logger.log(
+      "無法停用舊 Form：" +
+      error.message
+    );
+
+  }
+
+}
