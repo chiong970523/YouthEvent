@@ -1,0 +1,988 @@
+/**
+ * ============================================
+ * 青年相調系統
+ * Badminton.gs
+ * ============================================
+ *
+ * 雙人羽球自動配對
+ *
+ * 規則：
+ * 1. 只處理球類包含「羽球」的人
+ * 2. 有指定搭檔者優先配對
+ * 3. 指定搭檔必須存在且同樣報名羽球
+ * 4. 指定搭檔不能重複使用
+ * 5. 沒有指定搭檔者自動兩人一組
+ * 6. 最後單數者進入待配對
+ * 7. 可混雙
+ * 8. 不修改「報名資料」
+ *
+ * ============================================
+ */
+
+
+/**
+ * ============================================
+ * 建立羽球配對
+ * ============================================
+ */
+function createBadmintonPairs() {
+
+  const ss =
+    SpreadsheetApp.getActiveSpreadsheet();
+
+  const registrationSheet =
+    ss.getSheetByName(
+      CONFIG.SHEET.REGISTRATION
+    );
+
+  if (!registrationSheet) {
+
+    SpreadsheetApp.getUi().alert(
+      "❌ 找不到「" +
+      CONFIG.SHEET.REGISTRATION +
+      "」工作表。"
+    );
+
+    return;
+  }
+
+
+  const lastRow =
+    registrationSheet.getLastRow();
+
+  if (lastRow < 2) {
+
+    SpreadsheetApp.getUi().alert(
+      "目前沒有報名資料。"
+    );
+
+    return;
+  }
+
+
+  // ==========================================
+  // 讀取報名資料
+  // ==========================================
+
+  const rows =
+    registrationSheet
+      .getRange(
+        2,
+        1,
+        lastRow - 1,
+        REGISTRATION_HEADERS.length
+      )
+      .getValues();
+
+
+  const players = [];
+
+
+  rows.forEach(
+    function(row) {
+
+      const registrationId =
+        String(row[0] || "").trim();
+
+      const name =
+        String(row[2] || "").trim();
+
+      const sport =
+        String(row[7] || "").trim();
+
+
+      if (!registrationId || !name) {
+        return;
+      }
+
+
+      // 只處理羽球
+      if (!sport.includes("羽球")) {
+        return;
+      }
+
+
+      players.push({
+
+        id: registrationId,
+
+        name: name,
+
+        gender:
+          String(row[3] || "").trim(),
+
+        identity:
+          String(row[4] || "").trim(),
+
+        church:
+          String(row[5] || "").trim(),
+
+        phone:
+          String(row[6] || "").trim(),
+
+        hasPartner:
+          String(row[11] || "").trim(),
+
+        partner:
+          String(row[12] || "").trim()
+
+      });
+
+    }
+  );
+
+
+  // ==========================================
+  // 沒有羽球報名者
+  // ==========================================
+
+  if (players.length === 0) {
+
+    SpreadsheetApp.getUi().alert(
+      "目前沒有羽球報名者。"
+    );
+
+    return;
+  }
+
+
+  // ==========================================
+  // 建立姓名查找表
+  // ==========================================
+
+  const playerByName = {};
+
+
+  players.forEach(
+    function(player) {
+
+      const key =
+        normalizeBadmintonName_(
+          player.name
+        );
+
+
+      if (!playerByName[key]) {
+        playerByName[key] = [];
+      }
+
+
+      playerByName[key].push(
+        player
+      );
+
+    }
+  );
+
+
+  // ==========================================
+  // 配對狀態
+  // ==========================================
+
+  const assigned = {};
+
+  const pairs = [];
+
+  const pending = [];
+
+
+  let pairNumber = 1;
+
+
+  // ==========================================
+  // 第一階段
+  // 有指定搭檔者優先
+  // ==========================================
+
+  players.forEach(
+    function(player) {
+
+      if (assigned[player.id]) {
+        return;
+      }
+
+
+      if (
+        !isYesBadmintonValue_(
+          player.hasPartner
+        )
+      ) {
+        return;
+      }
+
+
+      const requestedName =
+        player.partner;
+
+
+      // ========================================
+      // 沒有填搭檔姓名
+      // ========================================
+
+      if (!requestedName) {
+
+        pending.push({
+
+          player: player,
+
+          reason:
+            "勾選已有羽球搭檔，但沒有填寫搭檔姓名"
+
+        });
+
+        return;
+      }
+
+
+      // ========================================
+      // 找搭檔
+      // ========================================
+
+      const matches =
+        playerByName[
+          normalizeBadmintonName_(
+            requestedName
+          )
+        ] || [];
+
+
+      if (matches.length === 0) {
+
+        pending.push({
+
+          player: player,
+
+          reason:
+            "找不到指定羽球搭檔：" +
+            requestedName
+
+        });
+
+        return;
+      }
+
+
+      if (matches.length > 1) {
+
+        pending.push({
+
+          player: player,
+
+          reason:
+            "指定羽球搭檔姓名重複：" +
+            requestedName
+
+        });
+
+        return;
+      }
+
+
+      const partner =
+        matches[0];
+
+
+      // ========================================
+      // 自己不能當自己的搭檔
+      // ========================================
+
+      if (
+        partner.id === player.id
+      ) {
+
+        pending.push({
+
+          player: player,
+
+          reason:
+            "不能指定自己作為羽球搭檔"
+
+        });
+
+        return;
+      }
+
+
+      // ========================================
+      // 搭檔已經被使用
+      // ========================================
+
+      if (assigned[partner.id]) {
+
+        pending.push({
+
+          player: player,
+
+          reason:
+            "指定搭檔「" +
+            partner.name +
+            "」已經被其他配對使用"
+
+        });
+
+        return;
+      }
+
+
+      // ========================================
+      // 建立正式配對
+      // ========================================
+
+      const pair = {
+
+        number:
+          pairNumber++,
+
+        members: [
+          player,
+          partner
+        ],
+
+        type:
+          "指定搭檔"
+
+      };
+
+
+      pairs.push(pair);
+
+
+      assigned[player.id] = true;
+      assigned[partner.id] = true;
+
+    }
+  );
+
+
+  // ==========================================
+  // 第二階段
+  // 沒有指定搭檔者自動配對
+  // ==========================================
+
+  const unassignedPlayers =
+    players.filter(
+      function(player) {
+
+        return !assigned[player.id];
+
+      }
+    );
+
+
+  let currentPair = [];
+
+
+  unassignedPlayers.forEach(
+    function(player) {
+
+      // 有指定搭檔但前面處理失敗
+      // 不偷偷把他拿去自動配對
+      if (
+        isYesBadmintonValue_(
+          player.hasPartner
+        )
+      ) {
+
+        return;
+      }
+
+
+      currentPair.push(
+        player
+      );
+
+
+      if (
+        currentPair.length === 2
+      ) {
+
+        const pair = {
+
+          number:
+            pairNumber++,
+
+          members:
+            currentPair,
+
+          type:
+            "自動配對"
+
+        };
+
+
+        pairs.push(pair);
+
+
+        currentPair.forEach(
+          function(member) {
+
+            assigned[member.id] = true;
+
+          }
+        );
+
+
+        currentPair = [];
+
+      }
+
+    }
+  );
+
+
+  // ==========================================
+  // 最後單數者
+  // ==========================================
+
+  currentPair.forEach(
+    function(player) {
+
+      pending.push({
+
+        player: player,
+
+        reason:
+          "自動配對後沒有其他羽球參加者"
+
+      });
+
+    }
+  );
+
+
+  // ==========================================
+  // 建立羽球工作表
+  // ==========================================
+
+  const badmintonSheet =
+    getOrCreateBadmintonSheet_(
+      ss
+    );
+
+
+  clearBadmintonSheet_(
+    badmintonSheet
+  );
+
+
+  // ==========================================
+  // 寫入配對
+  // ==========================================
+
+  writeBadmintonPairs_(
+    badmintonSheet,
+    pairs
+  );
+
+
+  // ==========================================
+  // 寫入待配對
+  // ==========================================
+
+  writeBadmintonPending_(
+    badmintonSheet,
+    pending
+  );
+
+
+  // ==========================================
+  // 完成訊息
+  // ==========================================
+
+  const assignedCount =
+    pairs.length * 2;
+
+
+  let message =
+    "✅ 羽球配對建立完成！\n\n" +
+
+    "羽球報名：" +
+    players.length +
+    " 人\n" +
+
+    "完整配對：" +
+    pairs.length +
+    " 組\n" +
+
+    "已配對：" +
+    assignedCount +
+    " 人\n" +
+
+    "待配對：" +
+    pending.length +
+    " 人";
+
+
+  if (pending.length > 0) {
+
+    message +=
+      "\n\n⚠️ 有人需要人工處理，" +
+      "請查看「羽球」工作表下方的待配對區。";
+
+  }
+
+
+  SpreadsheetApp
+    .getUi()
+    .alert(
+      message
+    );
+
+}
+
+
+/**
+ * ============================================
+ * 建立 / 取得羽球工作表
+ * ============================================
+ */
+function getOrCreateBadmintonSheet_(
+  ss
+) {
+
+  let sheet =
+    ss.getSheetByName(
+      CONFIG.SHEET.BADMINTON
+    );
+
+
+  if (!sheet) {
+
+    sheet =
+      ss.insertSheet(
+        CONFIG.SHEET.BADMINTON
+      );
+
+  }
+
+
+  return sheet;
+
+}
+
+
+/**
+ * ============================================
+ * 清除舊羽球資料
+ * ============================================
+ */
+function clearBadmintonSheet_(
+  sheet
+) {
+
+  // 避免合併儲存格造成清除錯誤
+  sheet
+    .getRange(
+      1,
+      1,
+      sheet.getMaxRows(),
+      sheet.getMaxColumns()
+    )
+    .breakApart();
+
+
+  sheet.clear();
+
+}
+
+
+/**
+ * ============================================
+ * 寫入羽球配對
+ * ============================================
+ */
+function writeBadmintonPairs_(
+  sheet,
+  pairs
+) {
+
+  const headers = [
+
+    "組別",
+
+    "報名編號",
+
+    "姓名",
+
+    "性別",
+
+    "身分",
+
+    "所屬會所",
+
+    "配對方式"
+
+  ];
+
+
+  sheet
+    .getRange(
+      1,
+      1,
+      1,
+      headers.length
+    )
+    .setValues([
+      headers
+    ]);
+
+
+  const output = [];
+
+
+  pairs.forEach(
+    function(pair) {
+
+      pair.members.forEach(
+        function(player) {
+
+          output.push([
+
+            "羽球" +
+            String(
+              pair.number
+            ).padStart(
+              2,
+              "0"
+            ),
+
+            player.id,
+
+            player.name,
+
+            player.gender,
+
+            player.identity,
+
+            player.church,
+
+            pair.type
+
+          ]);
+
+        }
+      );
+
+    }
+  );
+
+
+  if (output.length > 0) {
+
+    sheet
+      .getRange(
+        2,
+        1,
+        output.length,
+        headers.length
+      )
+      .setValues(
+        output
+      );
+
+  }
+
+
+  formatBadmintonHeader_(
+    sheet,
+    headers.length
+  );
+
+}
+
+
+/**
+ * ============================================
+ * 寫入待配對
+ * ============================================
+ */
+function writeBadmintonPending_(
+  sheet,
+  pending
+) {
+
+  const startRow =
+    sheet.getLastRow() + 3;
+
+
+  sheet
+    .getRange(
+      startRow,
+      1,
+      1,
+      4
+    )
+    .merge();
+
+
+  sheet
+    .getRange(
+      startRow,
+      1
+    )
+    .setValue(
+      "⚠️ 待配對 / 待處理"
+    )
+    .setFontWeight(
+      "bold"
+    );
+
+
+  const headers = [
+
+    "報名編號",
+
+    "姓名",
+
+    "所屬會所",
+
+    "原因"
+
+  ];
+
+
+  sheet
+    .getRange(
+      startRow + 1,
+      1,
+      1,
+      headers.length
+    )
+    .setValues([
+      headers
+    ]);
+
+
+  const output = [];
+
+
+  pending.forEach(
+    function(item) {
+
+      output.push([
+
+        item.player.id,
+
+        item.player.name,
+
+        item.player.church,
+
+        item.reason
+
+      ]);
+
+    }
+  );
+
+
+  if (output.length > 0) {
+
+    sheet
+      .getRange(
+        startRow + 2,
+        1,
+        output.length,
+        headers.length
+      )
+      .setValues(
+        output
+      );
+
+  }
+  else {
+
+    sheet
+      .getRange(
+        startRow + 2,
+        1,
+        1,
+        headers.length
+      )
+      .merge();
+
+
+    sheet
+      .getRange(
+        startRow + 2,
+        1
+      )
+      .setValue(
+        "目前沒有待配對人員。"
+      );
+
+  }
+
+
+  sheet
+    .getRange(
+      startRow + 1,
+      1,
+      1,
+      headers.length
+    )
+    .setFontWeight(
+      "bold"
+    );
+
+}
+
+
+/**
+ * ============================================
+ * 標題格式
+ * ============================================
+ */
+function formatBadmintonHeader_(
+  sheet,
+  columnCount
+) {
+
+  sheet.setFrozenRows(1);
+
+
+  sheet
+    .getRange(
+      1,
+      1,
+      1,
+      columnCount
+    )
+    .setFontWeight(
+      "bold"
+    );
+
+
+  sheet
+    .getRange(
+      1,
+      1,
+      Math.max(
+        sheet.getLastRow(),
+        1
+      ),
+      columnCount
+    )
+    .setVerticalAlignment(
+      "middle"
+    );
+
+
+  sheet.autoResizeColumns(
+    1,
+    columnCount
+  );
+
+}
+
+
+/**
+ * ============================================
+ * 判斷是否有搭檔
+ * ============================================
+ */
+function isYesBadmintonValue_(
+  value
+) {
+
+  const text =
+    String(
+      value || ""
+    )
+    .trim()
+    .toLowerCase();
+
+
+  return (
+
+    text === "是" ||
+
+    text === "有" ||
+
+    text === "yes" ||
+
+    text === "true"
+
+  );
+
+}
+
+
+/**
+ * ============================================
+ * 姓名標準化
+ * ============================================
+ */
+function normalizeBadmintonName_(
+  name
+) {
+
+  return String(
+    name || ""
+  )
+  .replace(
+    /\s+/g,
+    ""
+  )
+  .trim()
+  .toLowerCase();
+
+}
+
+
+/**
+ * ============================================
+ * 測試羽球系統
+ * ============================================
+ */
+function testBadmintonSystem() {
+
+  const ss =
+    SpreadsheetApp.getActiveSpreadsheet();
+
+
+  const sheet =
+    ss.getSheetByName(
+      CONFIG.SHEET.REGISTRATION
+    );
+
+
+  if (!sheet) {
+
+    SpreadsheetApp
+      .getUi()
+      .alert(
+        "❌ 找不到報名資料工作表。"
+      );
+
+    return;
+  }
+
+
+  const lastRow =
+    sheet.getLastRow();
+
+
+  const total =
+    Math.max(
+      lastRow - 1,
+      0
+    );
+
+
+  SpreadsheetApp
+    .getUi()
+    .alert(
+
+      "🏸 羽球系統測試\n\n" +
+
+      "目前報名資料：" +
+      total +
+      " 筆\n\n" +
+
+      "若要正式建立配對，" +
+      "請執行：\n" +
+      "createBadmintonPairs()"
+
+    );
+
+}
