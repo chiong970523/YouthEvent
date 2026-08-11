@@ -1,0 +1,75 @@
+/**
+ * ============================================
+ * 初始化青年相調系統
+ * ============================================
+ */
+
+function initializeSystem() {
+
+  const ss = SpreadsheetApp.getActiveSpreadsheet();
+
+  const sheetNames = Object.values(CONFIG.SHEET);
+
+  sheetNames.forEach(name => {
+
+    let sheet = ss.getSheetByName(name);
+
+    if (!sheet) {
+
+      sheet = ss.insertSheet(name);
+
+    } else {
+
+      sheet.clear();
+
+    }
+
+  });
+
+  setupRegistrationSheet(ss);
+
+  setupDashboardSheet(ss);
+
+  SpreadsheetApp.getUi().alert(
+    "✅ 青年相調系統初始化完成！"
+  );
+
+}
+function setupRegistrationSheet(ss) {
+
+  const sheet = ss.getSheetByName(CONFIG.SHEET.REGISTRATION);
+
+  sheet.clear();
+
+  const headers = [
+
+    "報名編號",
+
+    "姓名",
+
+    "性別",
+
+    "身分",
+
+    "所屬會所",
+
+    "手機",
+
+    "球類",
+
+    "隊友",
+
+    "飲食",
+
+    "備註",
+
+    "報名時間",
+
+    "報到"
+
+  ];
+
+  sheet.getRange(1, 1, 1, headers.length)
+       .setValues([headers]);
+
+}
